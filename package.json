@@ -1,0 +1,25 @@
+{
+  "name": "job-application-optimizer",
+  "version": "1.0.0",
+  "description": "AI-powered job application optimizer with resume analysis and document generation",
+  "scripts": {
+    "start": "concurrently \"npm run start:backend\" \"npm run start:frontend\"",
+    "start:backend": "python app.py",
+    "start:frontend": "cd frontend && npm start",
+    "install:all": "pip install -r requirements.txt && cd frontend && npm install",
+    "build": "cd frontend && npm run build",
+    "test": "python test_setup.py"
+  },
+  "keywords": [
+    "resume",
+    "ats",
+    "ai",
+    "job-application",
+    "gemini"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

@@ -1,0 +1,9 @@
+fastapi==0.122.0
+uvicorn[standard]==0.38.0
+python-multipart==0.0.20
+PyPDF2==3.0.1
+google-generativeai==0.8.5
+python-docx==1.2.0
+aiofiles==25.1.0
+pydantic==2.12.4
+pydantic-settings==2.7.1
