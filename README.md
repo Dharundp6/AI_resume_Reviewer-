@@ -374,4 +374,4 @@ MIT License - Free for personal and commercial use
 
 **Happy Job Hunting! 🎯**
 
-Made with ❤️ using Google Gemini AI
+Made by Dp 
