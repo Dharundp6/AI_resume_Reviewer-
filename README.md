@@ -174,6 +174,51 @@ app/
 - Personalized cover letter (DOCX)
 - ATS-friendly formatting
 
+## 🚀 Deploy to Vercel
+
+### One-Click Deploy
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/YOUR_USERNAME/YOUR_REPO_NAME)
+
+### Manual Deployment Steps
+
+1. **Install Vercel CLI** (optional)
+   ```bash
+   npm i -g vercel
+   ```
+
+2. **Set Environment Variables in Vercel**
+   - Go to your Vercel project dashboard
+   - Navigate to Settings → Environment Variables
+   - Add your `GEMINI_API_KEY`
+
+3. **Deploy via Vercel CLI**
+   ```bash
+   vercel
+   ```
+
+4. **Or Deploy via GitHub**
+   - Push your code to GitHub
+   - Import project in Vercel dashboard
+   - Vercel will auto-detect configuration from `vercel.json`
+   - Add environment variables
+   - Deploy!
+
+### Environment Variables for Vercel
+
+You need to set these in the Vercel dashboard:
+- `GEMINI_API_KEY` - Your Google Gemini API key (required)
+
+Get your free Gemini API key at: https://makersuite.google.com/app/apikey
+
+### Vercel Deployment Notes
+
+- The application will automatically build both frontend and backend
+- API routes are available at `/api/*`
+- Frontend is served at the root `/`
+- File uploads work with Vercel's temporary filesystem
+- For production, consider using external storage (S3, Cloudinary) for uploaded files
+
 ## 🔑 Configuration
 
 ### API Key Setup
