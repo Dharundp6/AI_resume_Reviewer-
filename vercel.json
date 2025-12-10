@@ -12,10 +12,5 @@
     { "source": "/openapi.json", "destination": "/api/index" },
     { "source": "/outputs/(.*)", "destination": "/api/index" },
     { "source": "/(.*)", "destination": "/" }
-  ],
-  "functions": {
-    "api/index.py": {
-      "runtime": "python3.9"
-    }
-  }
+  ]
 }
