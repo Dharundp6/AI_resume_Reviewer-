@@ -2,53 +2,69 @@
   "version": 2,
   "builds": [
     {
+      "src": "app.py",
+      "use": "@vercel/python"
+    },
+    {
       "src": "frontend/package.json",
       "use": "@vercel/static-build",
       "config": {
-        "distDir": "build"
+        "distDir": "frontend/build"
       }
-    },
-    {
-      "src": "app.py",
-      "use": "@vercel/python"
     }
   ],
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "app.py"
+      "dest": "/app.py"
     },
     {
       "src": "/docs",
-      "dest": "app.py"
+      "dest": "/app.py"
     },
     {
       "src": "/redoc",
-      "dest": "app.py"
+      "dest": "/app.py"
     },
     {
       "src": "/health",
-      "dest": "app.py"
+      "dest": "/app.py"
     },
     {
       "src": "/info",
-      "dest": "app.py"
+      "dest": "/app.py"
     },
     {
       "src": "/openapi.json",
-      "dest": "app.py"
+      "dest": "/app.py"
     },
     {
       "src": "/outputs/(.*)",
-      "dest": "app.py"
+      "dest": "/app.py"
+    },
+    {
+      "src": "/static/(.*)",
+      "dest": "/frontend/build/static/$1"
+    },
+    {
+      "src": "/favicon.ico",
+      "dest": "/frontend/build/favicon.ico"
+    },
+    {
+      "src": "/manifest.json",
+      "dest": "/frontend/build/manifest.json"
+    },
+    {
+      "src": "/robots.txt",
+      "dest": "/frontend/build/robots.txt"
+    },
+    {
+      "src": "/(.*\\.(js|css|ico|png|jpg|jpeg|svg|gif))",
+      "dest": "/frontend/build/$1"
     },
     {
       "src": "/(.*)",
-      "dest": "frontend/build/$1"
+      "dest": "/frontend/build/index.html"
     }
-  ],
-  "env": {
-    "GEMINI_API_KEY": "@gemini_api_key"
-  },
-  "regions": ["iad1"]
+  ]
 }
