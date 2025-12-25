@@ -24,14 +24,14 @@ export const resumeService = {
   },
 
   analyzeResume: async (resumeText, jobRole, jobDescription) => {
-    const formData = new FormData();
-    formData.append('resume_text', resumeText);
-    formData.append('job_role', jobRole);
+    const params = new URLSearchParams();
+    params.append('resume_text', resumeText);
+    params.append('job_role', jobRole);
     if (jobDescription) {
-      formData.append('job_description', jobDescription);
+      params.append('job_description', jobDescription);
     }
 
-    const response = await api.post('/resume/analyze', formData, {
+    const response = await api.post('/resume/analyze', params, {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
@@ -40,13 +40,13 @@ export const resumeService = {
   },
 
   checkATS: async (resumeText, jobDescription) => {
-    const formData = new FormData();
-    formData.append('resume_text', resumeText);
+    const params = new URLSearchParams();
+    params.append('resume_text', resumeText);
     if (jobDescription) {
-      formData.append('job_description', jobDescription);
+      params.append('job_description', jobDescription);
     }
 
-    const response = await api.post('/resume/ats-check', formData, {
+    const response = await api.post('/resume/ats-check', params, {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
@@ -58,10 +58,10 @@ export const resumeService = {
 // Company Services
 export const companyService = {
   researchCompany: async (companyName) => {
-    const formData = new FormData();
-    formData.append('company_name', companyName);
+    const params = new URLSearchParams();
+    params.append('company_name', companyName);
 
-    const response = await api.post('/company/research', formData, {
+    const response = await api.post('/company/research', params, {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
