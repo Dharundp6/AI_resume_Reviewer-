@@ -82,24 +82,42 @@ async def generate_documents(
 async def download_document(filename: str):
     """
     Download a generated document
-    
+
     Args:
         filename: Name of the file to download
-        
+
     Returns:
         File download response
     """
     try:
-        file_path = os.path.join("outputs", filename)
-        
-        if not os.path.exists(file_path):
+        # Sanitize filename to prevent path traversal attacks (CWE-22)
+        # Extract only the base filename, removing any directory components
+        safe_filename = os.path.basename(filename)
+
+        # Reject if filename is empty after sanitization
+        if not safe_filename:
+            raise HTTPException(status_code=400, detail="Invalid filename")
+
+        # Build the file path using the sanitized filename
+        file_path = os.path.join("outputs", safe_filename)
+
+        # Resolve to absolute path and verify it's within outputs directory
+        abs_file_path = os.path.abspath(file_path)
+        abs_outputs_dir = os.path.abspath("outputs")
+
+        if not abs_file_path.startswith(abs_outputs_dir + os.sep):
+            raise HTTPException(status_code=400, detail="Invalid filename")
+
+        if not os.path.exists(abs_file_path):
             raise HTTPException(status_code=404, detail="File not found")
-        
+
         return FileResponse(
-            path=file_path,
-            filename=filename,
+            path=abs_file_path,
+            filename=safe_filename,
             media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
         )
-        
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error downloading file: {str(e)}")
