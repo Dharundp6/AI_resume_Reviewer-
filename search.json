@@ -1,0 +1,191 @@
+[
+  {
+    "objectID": "ai.html",
+    "href": "ai.html",
+    "title": "Working with Gemini",
+    "section": "",
+    "text": "Everything the app knows about a résumé, a job or a company comes from Google Gemini. All of that traffic goes through one class, GeminiService, in services/gemini_service.py. This page walks through what it sends, how it configures each request, and how it turns replies into Python data.\nThe examples run the real service code. At the very last step, where the service would send a request to Google, they replay saved replies instead, so the site builds without an API key and every build shows the same output."
+  },
+  {
+    "objectID": "ai.html#setup",
+    "href": "ai.html#setup",
+    "title": "Working with Gemini",
+    "section": "Setup",
+    "text": "Setup\n\nimport sys\nsys.path.insert(0, \"..\")\n\nfrom services import gemini_service\nfrom core.config import settings\n\ngemini_service is created once, when services is first imported. Its constructor configures the Gemini client with settings.GEMINI_API_KEY and creates a model object. No request is sent at that point, so importing the app never needs network access.\nThe model and default parameters come from core/config.py:\n\n\n\n\n\nSetting\nValue\n\n\n\n\nGEMINI_MODEL\ngemini-flash-latest\n\n\nGEMINI_TEMPERATURE\n0.7\n\n\nGEMINI_MAX_TOKENS\n4096\n\n\n\n\n\nAll three can be overridden with environment variables or a .env file, because Settings is a pydantic BaseSettings class.\n\n\n\n\n\n\nNote\n\n\n\nThe README says the app uses Gemini 1.5 Pro, but the configured model is gemini-flash-latest. The table above is read from the code, so it is the one to trust."
+  },
+  {
+    "objectID": "ai.html#replaying-saved-replies",
+    "href": "ai.html#replaying-saved-replies",
+    "title": "Working with Gemini",
+    "section": "Replaying saved replies",
+    "text": "Replaying saved replies\nThe service sends every request through self.model.generate_content(...) and reads the reply’s .text. The helper below stands in for that one call: it records what the service sent, then returns the next saved reply.\n\nfrom types import SimpleNamespace\n\nclass ReplayModel:\n    \"\"\"Records each request and answers with the next saved reply.\"\"\"\n\n    def __init__(self, *replies):\n        self.replies = list(replies)\n        self.requests = []\n\n    def generate_content(self, prompt, generation_config=None):\n        self.requests.append({\"prompt\": prompt, \"config\": generation_config})\n        return SimpleNamespace(text=self.replies.pop(0))\n\ndef replay(*replies):\n    \"\"\"Point the service at a ReplayModel holding these replies.\"\"\"\n    model = ReplayModel(*replies)\n    gemini_service.model = model\n    return model"
+  },
+  {
+    "objectID": "ai.html#from-résumé-to-prompt",
+    "href": "ai.html#from-résumé-to-prompt",
+    "title": "Working with Gemini",
+    "section": "From résumé to prompt",
+    "text": "From résumé to prompt\nanalyze_resume builds one long prompt: an instruction, the résumé text, the job description, and the exact JSON shape the reply must follow. Here is what it sends for a short résumé:\n\nresume = \"Jane Doe\\nPython developer\\nSkills: Python, FastAPI, SQL\"\n\nmodel = replay('{\"overall_score\": 7.5, \"strengths\": [\"Python\"], '\n               '\"skills_to_emphasize\": [], \"keywords_to_add\": [\"Docker\"], '\n               '\"experience_to_highlight\": [], \"gaps_to_address\": [], '\n               '\"improvement_areas\": []}')\n\nanalysis = await gemini_service.analyze_resume(resume, job_role=\"Backend Engineer\")\nsent = model.requests[0][\"prompt\"]\nprint(sent[:420] + \"\\n...\")\n\nYou are an expert resume analyst and career coach. Analyze this resume for a Backend Engineer position.\n\nRESUME CONTENT:\nJane Doe\nPython developer\nSkills: Python, FastAPI, SQL\n\nJOB DESCRIPTION:\nNo specific job description provided\n\nProvide a comprehensive analysis in the following JSON format. YOUR ENTIRE RESPONSE MUST BE VALID JSON ONLY. DO NOT INCLUDE ANY TEXT OUTSIDE THE JSON STRUCTURE.\n\n{\n  \"overall_score\": 7.5,\n\n...\n\n\n\nassert \"Backend Engineer position\" in sent\nassert resume in sent\nassert \"No specific job description provided\" in sent\n\"✓ the prompt carries the role, the résumé, and a fallback job description\"\n\n'✓ the prompt carries the role, the résumé, and a fallback job description'\n\n\nWhen no job description is given, the prompt says “No specific job description provided” rather than leaving the section empty. The reply comes back as a plain Python dictionary:\n\nanalysis\n\n{'overall_score': 7.5,\n 'strengths': ['Python'],\n 'skills_to_emphasize': [],\n 'keywords_to_add': ['Docker'],\n 'experience_to_highlight': [],\n 'gaps_to_address': [],\n 'improvement_areas': []}"
+  },
+  {
+    "objectID": "ai.html#temperature-for-each-task",
+    "href": "ai.html#temperature-for-each-task",
+    "title": "Working with Gemini",
+    "section": "Temperature for each task",
+    "text": "Temperature for each task\nTemperature controls how varied the model’s output is: low values give consistent, predictable text, high values give more creative text. The service picks a temperature per task. The table below is measured, not copied: each method is called and the temperature it actually sent is read back from the recorded request.\n\n\n\n\n\nMethod\nTask\nTemperature sent\n\n\n\n\nanalyze_resume\nRésumé analysis\n0.3\n\n\nanalyze_ats_compatibility\nATS check\n0.3\n\n\nresearch_company\nCompany research\n0.3\n\n\ngenerate_optimized_resume\nRewritten résumé\n0.5\n\n\ngenerate_cover_letter\nCover letter\n0.7\n\n\n\n\n\nEvery method that expects JSON goes through generate_json_response, which fixes the temperature at 0.3 so replies stay close to the requested structure. The two writing tasks run warmer: 0.5 for the résumé, 0.7 for the cover letter.\n\nA temperature of 0 is silently ignored\ngenerate_content chooses its temperature with this line:\ntemperature=temperature or settings.GEMINI_TEMPERATURE,\nIn Python, 0.0 counts as false, so 0.0 or 0.7 evaluates to 0.7. Asking for the most deterministic output possible quietly gives the default instead:\n\nmodel = replay(\"ok\")\nawait gemini_service.generate_content(\"Say ok.\", temperature=0.0)\nmodel.requests[0][\"config\"].temperature\n\n0.7\n\n\n\nassert model.requests[0][\"config\"].temperature == settings.GEMINI_TEMPERATURE\n\"✓ confirmed: temperature=0.0 is replaced by the default\"\n\n'✓ confirmed: temperature=0.0 is replaced by the default'\n\n\nNo current caller passes 0.0, so the app’s output is not affected today. It would bite anyone who adds one. The fix is to test for None explicitly:\ntemperature=settings.GEMINI_TEMPERATURE if temperature is None else temperature,"
+  },
+  {
+    "objectID": "ai.html#turning-replies-into-data",
+    "href": "ai.html#turning-replies-into-data",
+    "title": "Working with Gemini",
+    "section": "Turning replies into data",
+    "text": "Turning replies into data\nLanguage models do not always return clean JSON, even when told to. generate_json_response cleans the reply in three stages before giving up:\n\nStrip Markdown code fences (```json at the start, ``` at the end).\nTry to parse what is left as JSON.\nIf that fails, find the outermost { ... } in the text and parse only that.\n\nEach case below sends a differently shaped reply through the real method:\n\nasync def parse(reply):\n    replay(reply)\n    return await gemini_service.generate_json_response(\"any prompt\")\n\nclean   = await parse('{\"ats_score\": 72}')\nfenced  = await parse('```json\\n{\"ats_score\": 72}\\n```')\nchatty  = await parse('Here is the analysis you asked for:\\n{\"ats_score\": 72}\\nGood luck!')\ntrailer = await parse('```json\\n{\"ats_score\": 72}\\n``` Hope this helps!')\n\nclean, fenced, chatty, trailer\n\n({'ats_score': 72}, {'ats_score': 72}, {'ats_score': 72}, {'ats_score': 72})\n\n\n\nassert clean == fenced == chatty == trailer == {\"ats_score\": 72}\n\"✓ clean, fenced, chatty and trailing-text replies all parse to the same data\"\n\n'✓ clean, fenced, chatty and trailing-text replies all parse to the same data'\n\n\nThe last case is worth noticing. The closing fence is only stripped when it is the final thing in the reply, so Hope this helps! defeats stage 1 and the first parse fails. Stage 3 rescues it.\nWhen there is no JSON object anywhere in the reply, the method raises:\n\ntry:\n    await parse(\"Sorry, I can't help with that.\")\nexcept Exception as err:\n    parse_error = str(err)\n\nparse_error\n\n'Failed to parse JSON response: Expecting value: line 1 column 1 (char 0)'\n\n\n\nassert parse_error.startswith(\"Failed to parse JSON response\")\n\"✓ a reply with no JSON raises a labelled error\"\n\n'✓ a reply with no JSON raises a labelled error'"
+  },
+  {
+    "objectID": "ai.html#when-the-request-itself-fails",
+    "href": "ai.html#when-the-request-itself-fails",
+    "title": "Working with Gemini",
+    "section": "When the request itself fails",
+    "text": "When the request itself fails\nAny error from the Gemini client (a bad key, no network, an exhausted quota) is caught and re-raised with a Gemini API error: prefix:\n\nclass FailingModel:\n    def generate_content(self, prompt, generation_config=None):\n        raise RuntimeError(\"API key not valid\")\n\ngemini_service.model = FailingModel()\ntry:\n    await gemini_service.generate_content(\"hello\")\nexcept Exception as err:\n    api_error = str(err)\n\napi_error\n\n'Gemini API error: API key not valid'\n\n\n\nassert api_error == \"Gemini API error: API key not valid\"\n\"✓ client errors are wrapped with a clear prefix\"\n\n'✓ client errors are wrapped with a clear prefix'\n\n\nAs with the PDF service, the error is re-raised as a plain Exception, so the original error type is lost. The API routers catch it and return HTTP 500, adding their own prefix, so a client sees a detail such as “Error analyzing resume: Gemini API error: API key not valid”."
+  },
+  {
+    "objectID": "ai.html#summary",
+    "href": "ai.html#summary",
+    "title": "Working with Gemini",
+    "section": "Summary",
+    "text": "Summary\n\n\n\nMethod\nReturns\nTemperature\nParsed as\n\n\n\n\nanalyze_resume\ndict\n0.3\nJSON\n\n\nanalyze_ats_compatibility\ndict\n0.3\nJSON\n\n\nresearch_company\ndict\n0.3\nJSON\n\n\ngenerate_recommendations\ndict\n0.3\nJSON\n\n\ngenerate_optimized_resume\nstr\n0.5\nplain text\n\n\ngenerate_cover_letter\nstr\n0.7\nplain text\n\n\n\nThings to know when changing this service:\n\nReplies are not validated here. Whatever keys Gemini returns are passed on as-is; checking the shape is left to the API layer’s response models.\ntemperature=0.0 is replaced by the default (see above).\nAll failures surface as plain Exceptions, distinguished only by message."
+  },
+  {
+    "objectID": "about.html",
+    "href": "about.html",
+    "title": "About",
+    "section": "",
+    "text": "AI_resume_Reviewer (Job Application Optimizer) is a personal project by Dharun Prasanth. The source is on GitHub at https://github.com/Dharundp6/AI_resume_Reviewer-.\n\n\n\nBackend\nPython, FastAPI, Uvicorn\n\n\nAI model\nGoogle Gemini, via google-generativeai\n\n\nPDF and Word\nPyPDF2 for reading, python-docx for writing\n\n\nFrontend\nReact 18 with Material-UI\n\n\n\nThe README describes the project as MIT licensed, but the repository does not yet include a LICENSE file. Add one to make the licence official."
+  },
+  {
+    "objectID": "about.html#the-project",
+    "href": "about.html#the-project",
+    "title": "About",
+    "section": "",
+    "text": "AI_resume_Reviewer (Job Application Optimizer) is a personal project by Dharun Prasanth. The source is on GitHub at https://github.com/Dharundp6/AI_resume_Reviewer-.\n\n\n\nBackend\nPython, FastAPI, Uvicorn\n\n\nAI model\nGoogle Gemini, via google-generativeai\n\n\nPDF and Word\nPyPDF2 for reading, python-docx for writing\n\n\nFrontend\nReact 18 with Material-UI\n\n\n\nThe README describes the project as MIT licensed, but the repository does not yet include a LICENSE file. Add one to make the licence official."
+  },
+  {
+    "objectID": "about.html#about-these-docs",
+    "href": "about.html#about-these-docs",
+    "title": "About",
+    "section": "About these docs",
+    "text": "About these docs\nThis site is written in Quarto. Pages are .qmd files: Markdown with Python code cells that run during every build. The site imports the app from the repository root and documents what the code actually does, not what it was meant to do.\nThree rules keep the pages trustworthy:\n\nEvery claim is checked. Pages end their examples with assert statements. If the app’s behaviour changes, an assertion fails, and Quarto stops the build instead of publishing a wrong page.\nNo network, no keys. Pages that involve Gemini use a stand-in model with fixed replies. Builds are free, identical every time, and need no GEMINI_API_KEY.\nNo side effects. Sample PDFs are generated during the build, and any files the app writes go to temporary folders, never to uploads/ or outputs/."
+  },
+  {
+    "objectID": "about.html#building-the-site",
+    "href": "about.html#building-the-site",
+    "title": "About",
+    "section": "Building the site",
+    "text": "Building the site\nThe docs have their own Python environment, managed with uv. It pins the app’s own dependencies from requirements.txt, plus the documentation tools (jupyter, fpdf2, httpx).\ncd docs\nuv sync                    # install the environment\nuv run quarto preview      # live preview while writing\nuv run quarto render       # build the site into _site/\nuv run matters: it puts this project’s Python first on the PATH, so Quarto runs the cells with the right packages installed."
+  },
+  {
+    "objectID": "index.html",
+    "href": "index.html",
+    "title": "Job Application Optimizer",
+    "section": "",
+    "text": "The Job Application Optimizer takes a PDF résumé and a job description, and uses Google Gemini to tell you how well the two match, what to change, and what to expect from the company. It can then write a tailored résumé and cover letter as Word documents.\nThese pages document how the backend works. Every code example on them is run against the real code in this repository when the site is built, so what you read is what the code does today."
+  },
+  {
+    "objectID": "index.html#what-it-does",
+    "href": "index.html#what-it-does",
+    "title": "Job Application Optimizer",
+    "section": "What it does",
+    "text": "What it does\n\n\n\n\n\n\n\n\nStep\nWhat happens\nWhere in the code\n\n\n\n\n1. Upload\nText is extracted from the résumé PDF\nservices/pdf_service.py\n\n\n2. Analyse\nGemini scores the résumé (1–10) against the job role\nservices/gemini_service.py\n\n\n3. ATS check\nGemini estimates an applicant-tracking-system score (0–100%) and lists missing keywords\nservices/gemini_service.py\n\n\n4. Research\nGemini summarises the target company\nservices/gemini_service.py\n\n\n5. Recommend\nThe analyses above are combined into interview and application advice\nservices/gemini_service.py\n\n\n6. Generate\nA rewritten résumé and a cover letter are saved as .docx files\nservices/document_service.py"
+  },
+  {
+    "objectID": "index.html#how-the-pieces-fit",
+    "href": "index.html#how-the-pieces-fit",
+    "title": "Job Application Optimizer",
+    "section": "How the pieces fit",
+    "text": "How the pieces fit\nA React frontend talks to a FastAPI backend over HTTP. The backend’s routers are thin: they validate input and hand the work to three services.\n\n\n\n\n\nflowchart LR\n  UI[\"React frontend&lt;br/&gt;(frontend/)\"] --&gt;|HTTP| API[\"FastAPI routers&lt;br/&gt;(api/)\"]\n  API --&gt; PDF[\"pdf_service&lt;br/&gt;PyPDF2\"]\n  API --&gt; GEM[\"gemini_service&lt;br/&gt;Google Gemini\"]\n  API --&gt; DOC[\"document_service&lt;br/&gt;python-docx\"]\n  GEM --&gt;|prompts| CLOUD[(\"Gemini API\")]\n  DOC --&gt; OUT[/\"outputs/*.docx\"/]"
+  },
+  {
+    "objectID": "index.html#the-api-at-a-glance",
+    "href": "index.html#the-api-at-a-glance",
+    "title": "Job Application Optimizer",
+    "section": "The API at a glance",
+    "text": "The API at a glance\nThis table is generated from the application itself: it imports the FastAPI app and lists its registered routes, with the first line of each endpoint’s docstring. If a route is added, renamed or removed, the table changes with it.\n\n\n\n\n\n\n\n\n\n\n\nMethod\nPath\nArea\nPurpose\n\n\n\n\nPOST\n/api/resume/upload\nResume\nUpload and extract text from resume PDF\n\n\nPOST\n/api/resume/analyze\nResume\nAnalyze resume for a specific job role\n\n\nPOST\n/api/resume/ats-check\nResume\nCheck ATS (Applicant Tracking System) compatibility\n\n\nPOST\n/api/company/research\nCompany\nResearch company information\n\n\nPOST\n/api/documents/generate\nDocuments\nGenerate optimized resume and cover letter\n\n\nGET\n/api/documents/download/{filename}\nDocuments\nDownload a generated document\n\n\nPOST\n/api/analysis/recommendations\nAnalysis\nGenerate personalized recommendations based on all analyses\n\n\n\n\n\nThe app exposes 7 API endpoints. It also serves /health, /info, interactive API docs at /docs, and the built React frontend from /."
+  },
+  {
+    "objectID": "index.html#running-it-locally",
+    "href": "index.html#running-it-locally",
+    "title": "Job Application Optimizer",
+    "section": "Running it locally",
+    "text": "Running it locally\ngit clone https://github.com/Dharundp6/AI_resume_Reviewer-.git\ncd AI_resume_Reviewer-\npip install -r requirements.txt\ncd frontend && npm install && cd ..\necho GEMINI_API_KEY=your_key_here &gt; .env\npython app.py          # backend on http://localhost:8000\nThe frontend runs separately with npm start inside frontend/, on http://localhost:3000. Every step except the upload needs a Gemini API key. That includes document generation: Gemini writes the résumé and cover letter, and python-docx only formats them."
+  },
+  {
+    "objectID": "index.html#guide",
+    "href": "index.html#guide",
+    "title": "Job Application Optimizer",
+    "section": "Guide",
+    "text": "Guide\n\nReading a résumé PDF: text extraction, multi-page files, and the failure cases\nWorking with Gemini: prompts, temperatures, and parsing model replies\nAbout these docs: how the site is built and kept accurate"
+  },
+  {
+    "objectID": "pdf.html",
+    "href": "pdf.html",
+    "title": "Reading a résumé PDF",
+    "section": "",
+    "text": "Every analysis in the app starts from plain text. When someone uploads a résumé, the first job is to pull the text out of the PDF. That job belongs to pdf_service, defined in services/pdf_service.py.\nEverything on this page is executed against the real code when the site is built. If the service changes behaviour, the checks below fail and the build stops."
+  },
+  {
+    "objectID": "pdf.html#setup",
+    "href": "pdf.html#setup",
+    "title": "Reading a résumé PDF",
+    "section": "Setup",
+    "text": "Setup\nThe app’s modules import each other by top-level name (from services import ..., from core.config import settings), so Python needs the repository root on its module search path before anything can be imported:\n\nimport sys\nsys.path.insert(0, \"..\")\n\nfrom services import pdf_service\nfrom services.pdf_service import PDFService\n\npdf_service is a ready-made instance of the PDFService class. Both of its methods are static, so the instance holds no state; it exists so the rest of the app can import one shared object."
+  },
+  {
+    "objectID": "pdf.html#building-sample-résumés",
+    "href": "pdf.html#building-sample-résumés",
+    "title": "Reading a résumé PDF",
+    "section": "Building sample résumés",
+    "text": "Building sample résumés\nRather than depend on a real CV, the page generates its own PDFs at build time. This keeps the docs reproducible on any machine and free of personal data.\n\nfrom fpdf import FPDF\n\ndef make_pdf(*pages: str) -&gt; bytes:\n    \"\"\"Build a PDF with one page per string argument.\"\"\"\n    pdf = FPDF()\n    pdf.set_font(\"Helvetica\", size=12)\n    for page_text in pages:\n        pdf.add_page()\n        if page_text:\n            pdf.multi_cell(0, 8, page_text)\n    return bytes(pdf.output())\n\none_page = make_pdf(\"Jane Doe\\nPython developer\\nSkills: Python, FastAPI, SQL\")\nf\"{len(one_page):,} bytes\"\n\n'1,033 bytes'"
+  },
+  {
+    "objectID": "pdf.html#the-two-methods",
+    "href": "pdf.html#the-two-methods",
+    "title": "Reading a résumé PDF",
+    "section": "The two methods",
+    "text": "The two methods\n\n\n\n\n\n\n\n\nMethod\nTakes\nUsed by\n\n\n\n\nextract_text_from_pdf(file)\nan open binary file object\nthe other method\n\n\nextract_text_from_bytes(pdf_bytes)\nraw bytes\nthe /api/resume/upload endpoint\n\n\n\nThe upload endpoint receives the file as bytes, so it calls extract_text_from_bytes, which wraps the bytes in an in-memory file (io.BytesIO) and hands them to extract_text_from_pdf."
+  },
+  {
+    "objectID": "pdf.html#extracting-a-one-page-résumé",
+    "href": "pdf.html#extracting-a-one-page-résumé",
+    "title": "Reading a résumé PDF",
+    "section": "Extracting a one-page résumé",
+    "text": "Extracting a one-page résumé\n\ntext = pdf_service.extract_text_from_bytes(one_page)\nprint(text)\n\nJane Doe\nPython developer\nSkills: Python, FastAPI, SQL\n\n\nThe result has 3 lines. The check below confirms the text comes back exactly as it went in:\n\nassert text == \"Jane Doe\\nPython developer\\nSkills: Python, FastAPI, SQL\"\n\"✓ extraction matches the input\"\n\n'✓ extraction matches the input'"
+  },
+  {
+    "objectID": "pdf.html#multi-page-résumés",
+    "href": "pdf.html#multi-page-résumés",
+    "title": "Reading a résumé PDF",
+    "section": "Multi-page résumés",
+    "text": "Multi-page résumés\nThe service extracts each page separately, joins them with a blank line (\"\\n\\n\"), then strips whitespace from both ends:\n\ntwo_pages = make_pdf(\"Page one: experience\", \"Page two: education\")\nmulti = pdf_service.extract_text_from_bytes(two_pages)\nprint(repr(multi))\n\n'Page one: experience\\n\\nPage two: education'\n\n\n\nassert multi == \"Page one: experience\\n\\nPage two: education\"\n\"✓ pages are joined with a blank line\"\n\n'✓ pages are joined with a blank line'\n\n\nThe blank line matters downstream: it is the only marker of where one page ends and the next begins once the text reaches Gemini."
+  },
+  {
+    "objectID": "pdf.html#when-the-input-is-not-a-pdf",
+    "href": "pdf.html#when-the-input-is-not-a-pdf",
+    "title": "Reading a résumé PDF",
+    "section": "When the input is not a PDF",
+    "text": "When the input is not a PDF\nIf the bytes are not a readable PDF, the service catches the underlying PyPDF2 error and re-raises it as a plain Exception with a readable prefix:\n\ntry:\n    pdf_service.extract_text_from_bytes(b\"this is not a pdf\")\nexcept Exception as err:\n    error_message = str(err)\n\nprint(error_message)\n\nFailed to extract text from PDF: EOF marker not found\n\n\n\nassert error_message.startswith(\"Failed to extract text from PDF:\")\n\"✓ bad input raises a clearly labelled error\"\n\n'✓ bad input raises a clearly labelled error'\n\n\nBecause it is re-raised as a plain Exception, callers cannot tell a corrupt file apart from any other failure by exception type; they only have the message text."
+  },
+  {
+    "objectID": "pdf.html#when-the-pdf-has-no-text",
+    "href": "pdf.html#when-the-pdf-has-no-text",
+    "title": "Reading a résumé PDF",
+    "section": "When the PDF has no text",
+    "text": "When the PDF has no text\nA PDF made only of images (a scanned CV, for example) contains no text layer. Extraction does not fail; it returns an empty string:\n\nblank = pdf_service.extract_text_from_bytes(make_pdf(\"\"))\nrepr(blank)\n\n\"''\"\n\n\n\nassert blank == \"\"\n\"✓ a PDF with no text layer gives an empty string\"\n\n'✓ a PDF with no text layer gives an empty string'\n\n\nThe service leaves that case to its caller. The upload endpoint in api/resume.py checks for it and responds with HTTP 400 “No text could be extracted from the PDF”. The app has no OCR step, so scanned résumés cannot be analysed."
+  },
+  {
+    "objectID": "pdf.html#summary",
+    "href": "pdf.html#summary",
+    "title": "Reading a résumé PDF",
+    "section": "Summary",
+    "text": "Summary\n\n\n\n\n\n\n\nInput\nResult\n\n\n\n\nText PDF, one page\nthe page’s text\n\n\nText PDF, several pages\npages joined by a blank line\n\n\nBytes that aren’t a PDF\nException(\"Failed to extract text from PDF: ...\")\n\n\nPDF with no text layer\n\"\" (the endpoint turns this into HTTP 400)"
+  }
+]
