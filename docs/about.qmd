@@ -1,0 +1,39 @@
+---
+title: "About"
+---
+
+## The project
+
+**AI_resume_Reviewer** (Job Application Optimizer) is a personal project by Dharun Prasanth. The source is on GitHub at <https://github.com/Dharundp6/AI_resume_Reviewer->.
+
+|              |                                             |
+|--------------|---------------------------------------------|
+| Backend      | Python, FastAPI, Uvicorn                    |
+| AI model     | Google Gemini, via `google-generativeai`    |
+| PDF and Word | PyPDF2 for reading, python-docx for writing |
+| Frontend     | React 18 with Material-UI                   |
+
+The README describes the project as MIT licensed, but the repository does not yet include a `LICENSE` file. Add one to make the licence official.
+
+## About these docs
+
+This site is written in [Quarto](https://quarto.org). Pages are `.qmd` files: Markdown with Python code cells that run during every build. The site imports the app from the repository root and documents what the code actually does, not what it was meant to do.
+
+Three rules keep the pages trustworthy:
+
+1.  **Every claim is checked.** Pages end their examples with `assert` statements. If the app's behaviour changes, an assertion fails, and Quarto stops the build instead of publishing a wrong page.
+2.  **No network, no keys.** Pages that involve Gemini use a stand-in model with fixed replies. Builds are free, identical every time, and need no `GEMINI_API_KEY`.
+3.  **No side effects.** Sample PDFs are generated during the build, and any files the app writes go to temporary folders, never to `uploads/` or `outputs/`.
+
+## Building the site
+
+The docs have their own Python environment, managed with [uv](https://docs.astral.sh/uv/). It pins the app's own dependencies from `requirements.txt`, plus the documentation tools (`jupyter`, `fpdf2`, `httpx`).
+
+``` bash
+cd docs
+uv sync                    # install the environment
+uv run quarto preview      # live preview while writing
+uv run quarto render       # build the site into _site/
+```
+
+`uv run` matters: it puts this project's Python first on the PATH, so Quarto runs the cells with the right packages installed.

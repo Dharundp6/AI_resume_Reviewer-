@@ -1,0 +1,103 @@
+---
+title: "Job Application Optimizer"
+subtitle: "Developer documentation for AI_resume_Reviewer"
+---
+
+The Job Application Optimizer takes a PDF résumé and a job description, and
+uses Google Gemini to tell you how well the two match, what to change, and what
+to expect from the company. It can then write a tailored résumé and cover
+letter as Word documents.
+
+These pages document how the backend works. Every code example on them is run
+against the real code in this repository when the site is built, so what you read is
+what the code does today.
+
+## What it does
+
+| Step | What happens | Where in the code |
+|---|---|---|
+| 1. Upload | Text is extracted from the résumé PDF | `services/pdf_service.py` |
+| 2. Analyse | Gemini scores the résumé (1–10) against the job role | `services/gemini_service.py` |
+| 3. ATS check | Gemini estimates an applicant-tracking-system score (0–100%) and lists missing keywords | `services/gemini_service.py` |
+| 4. Research | Gemini summarises the target company | `services/gemini_service.py` |
+| 5. Recommend | The analyses above are combined into interview and application advice | `services/gemini_service.py` |
+| 6. Generate | A rewritten résumé and a cover letter are saved as `.docx` files | `services/document_service.py` |
+
+## How the pieces fit
+
+A React frontend talks to a FastAPI backend over HTTP. The backend's routers
+are thin: they validate input and hand the work to three services.
+
+```{mermaid}
+flowchart LR
+  UI["React frontend<br/>(frontend/)"] -->|HTTP| API["FastAPI routers<br/>(api/)"]
+  API --> PDF["pdf_service<br/>PyPDF2"]
+  API --> GEM["gemini_service<br/>Google Gemini"]
+  API --> DOC["document_service<br/>python-docx"]
+  GEM -->|prompts| CLOUD[("Gemini API")]
+  DOC --> OUT[/"outputs/*.docx"/]
+```
+
+## The API at a glance
+
+This table is generated from the application itself: it imports the FastAPI
+app and lists its registered routes, with the first line of each endpoint's
+docstring. If a route is added, renamed or removed, the table changes with it.
+
+```{python}
+#| echo: false
+import os, sys, tempfile
+sys.path.insert(0, os.path.abspath(".."))
+
+# app.py creates uploads/ and outputs/ in the working directory on import,
+# so import it from a throwaway folder to keep the docs project clean.
+here = os.getcwd()
+os.chdir(tempfile.mkdtemp())
+try:
+    import app as backend
+finally:
+    os.chdir(here)
+
+from fastapi.routing import APIRoute
+from IPython.display import Markdown
+
+api_routes = [
+    r for r in backend.app.routes
+    if isinstance(r, APIRoute) and r.path.startswith("/api/")
+]
+
+rows = ["| Method | Path | Area | Purpose |", "|---|---|---|---|"]
+for r in api_routes:
+    method = ", ".join(sorted(r.methods))
+    purpose = (r.endpoint.__doc__ or "").strip().splitlines()[0]
+    rows.append(f"| `{method}` | `{r.path}` | {', '.join(r.tags)} | {purpose} |")
+
+Markdown("\n".join(rows))
+```
+
+The app exposes `{python} len(api_routes)` API endpoints. It also serves
+`/health`, `/info`, interactive API docs at `/docs`, and the built React
+frontend from `/`.
+
+## Running it locally
+
+```bash
+git clone https://github.com/Dharundp6/AI_resume_Reviewer-.git
+cd AI_resume_Reviewer-
+pip install -r requirements.txt
+cd frontend && npm install && cd ..
+echo GEMINI_API_KEY=your_key_here > .env
+python app.py          # backend on http://localhost:8000
+```
+
+The frontend runs separately with `npm start` inside `frontend/`, on
+<http://localhost:3000>. Every step except the upload needs a Gemini API key.
+That includes document generation: Gemini writes the résumé and cover letter,
+and python-docx only formats them.
+
+## Guide
+
+- [Reading a résumé PDF](pdf.qmd): text extraction, multi-page files, and the
+  failure cases
+- [Working with Gemini](ai.qmd): prompts, temperatures, and parsing model replies
+- [About these docs](about.qmd): how the site is built and kept accurate

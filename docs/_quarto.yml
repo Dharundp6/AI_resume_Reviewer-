@@ -1,0 +1,32 @@
+project:
+  type: website
+  # Render only the docs pages, not notebooks or Markdown inside app/
+  render:
+    - index.qmd
+    - about.qmd
+    - pdf.qmd
+    - ai.qmd
+
+website:
+  title: "Resume Reviewer"
+  navbar:
+    left:
+      - href: index.qmd
+        text: Home
+      - href: pdf.qmd
+        text: PDFs
+      - href: ai.qmd
+        text: Gemini
+      - href: about.qmd
+        text: About
+
+format:
+  html:
+    theme:
+      - cosmo
+      - brand
+    css: styles.css
+    toc: true
+
+
+

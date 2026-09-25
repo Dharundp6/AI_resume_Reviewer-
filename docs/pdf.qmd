@@ -1,0 +1,128 @@
+---
+title: "Reading a résumé PDF"
+description: "How the app turns an uploaded PDF into plain text, and what it does when it can't."
+---
+
+Every analysis in the app starts from plain text. When someone uploads a résumé, the first job is to pull the text out of the PDF. That job belongs to `pdf_service`, defined in `services/pdf_service.py`.
+
+Everything on this page is executed against the real code when the site is built. If the service changes behaviour, the checks below fail and the build stops.
+
+## Setup
+
+The app's modules import each other by top-level name (`from services import ...`, `from core.config import settings`), so Python needs the repository root on its module search path before anything can be imported:
+
+```{python}
+import sys
+sys.path.insert(0, "..")
+
+from services import pdf_service
+from services.pdf_service import PDFService
+```
+
+`pdf_service` is a ready-made instance of the `PDFService` class. Both of its methods are static, so the instance holds no state; it exists so the rest of the app can import one shared object.
+
+## Building sample résumés
+
+Rather than depend on a real CV, the page generates its own PDFs at build time. This keeps the docs reproducible on any machine and free of personal data.
+
+```{python}
+from fpdf import FPDF
+
+def make_pdf(*pages: str) -> bytes:
+    """Build a PDF with one page per string argument."""
+    pdf = FPDF()
+    pdf.set_font("Helvetica", size=12)
+    for page_text in pages:
+        pdf.add_page()
+        if page_text:
+            pdf.multi_cell(0, 8, page_text)
+    return bytes(pdf.output())
+
+one_page = make_pdf("Jane Doe\nPython developer\nSkills: Python, FastAPI, SQL")
+f"{len(one_page):,} bytes"
+```
+
+## The two methods
+
+| Method | Takes | Used by |
+|------------------------|------------------------|------------------------|
+| `extract_text_from_pdf(file)` | an open binary file object | the other method |
+| `extract_text_from_bytes(pdf_bytes)` | raw `bytes` | the `/api/resume/upload` endpoint |
+
+The upload endpoint receives the file as bytes, so it calls `extract_text_from_bytes`, which wraps the bytes in an in-memory file (`io.BytesIO`) and hands them to `extract_text_from_pdf`.
+
+## Extracting a one-page résumé
+
+```{python}
+text = pdf_service.extract_text_from_bytes(one_page)
+print(text)
+```
+
+The result has `{python} len(text.splitlines())` lines. The check below confirms the text comes back exactly as it went in:
+
+```{python}
+assert text == "Jane Doe\nPython developer\nSkills: Python, FastAPI, SQL"
+"✓ extraction matches the input"
+```
+
+## Multi-page résumés
+
+The service extracts each page separately, joins them with a blank line (`"\n\n"`), then strips whitespace from both ends:
+
+```{python}
+two_pages = make_pdf("Page one: experience", "Page two: education")
+multi = pdf_service.extract_text_from_bytes(two_pages)
+print(repr(multi))
+```
+
+```{python}
+assert multi == "Page one: experience\n\nPage two: education"
+"✓ pages are joined with a blank line"
+```
+
+The blank line matters downstream: it is the only marker of where one page ends and the next begins once the text reaches Gemini.
+
+## When the input is not a PDF
+
+If the bytes are not a readable PDF, the service catches the underlying `PyPDF2` error and re-raises it as a plain `Exception` with a readable prefix:
+
+```{python}
+try:
+    pdf_service.extract_text_from_bytes(b"this is not a pdf")
+except Exception as err:
+    error_message = str(err)
+
+print(error_message)
+```
+
+```{python}
+assert error_message.startswith("Failed to extract text from PDF:")
+"✓ bad input raises a clearly labelled error"
+```
+
+Because it is re-raised as a plain `Exception`, callers cannot tell a corrupt file apart from any other failure by exception type; they only have the message text.
+
+## When the PDF has no text
+
+A PDF made only of images (a scanned CV, for example) contains no text layer. Extraction does not fail; it returns an empty string:
+
+```{python}
+blank = pdf_service.extract_text_from_bytes(make_pdf(""))
+repr(blank)
+```
+
+```{python}
+assert blank == ""
+"✓ a PDF with no text layer gives an empty string"
+```
+
+The service leaves that case to its caller. The upload endpoint in `api/resume.py` checks for it and responds with HTTP 400 *"No text could be extracted from the PDF"*. The app has no OCR step, so scanned résumés cannot be analysed.
+
+## Summary
+
+| Input | Result |
+|------------------------------------|------------------------------------|
+| Text PDF, one page | the page's text |
+| Text PDF, several pages | pages joined by a blank line |
+| Bytes that aren't a PDF | `Exception("Failed to extract text from PDF: ...")` |
+| PDF with no text layer | `""` (the endpoint turns this into HTTP 400) |

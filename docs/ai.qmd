@@ -1,0 +1,285 @@
+---
+title: "Working with Gemini"
+description: "How the app builds prompts, sets generation parameters, and turns model replies into structured data."
+---
+
+Everything the app knows about a résumé, a job or a company comes from Google
+Gemini. All of that traffic goes through one class, `GeminiService`, in
+`services/gemini_service.py`. This page walks through what it sends, how
+it configures each request, and how it turns replies into Python data.
+
+The examples run the real service code. At the very last step, where the
+service would send a request to Google, they replay saved replies instead, so
+the site builds without an API key and every build shows the same output.
+
+## Setup
+
+```{python}
+import sys
+sys.path.insert(0, "..")
+
+from services import gemini_service
+from core.config import settings
+```
+
+`gemini_service` is created once, when `services` is first imported. Its
+constructor configures the Gemini client with `settings.GEMINI_API_KEY` and
+creates a model object. No request is sent at that point, so importing the
+app never needs network access.
+
+The model and default parameters come from `core/config.py`:
+
+```{python}
+#| echo: false
+from IPython.display import Markdown
+
+Markdown(f"""
+| Setting | Value |
+|---|---|
+| `GEMINI_MODEL` | `{settings.GEMINI_MODEL}` |
+| `GEMINI_TEMPERATURE` | `{settings.GEMINI_TEMPERATURE}` |
+| `GEMINI_MAX_TOKENS` | `{settings.GEMINI_MAX_TOKENS}` |
+""")
+```
+
+All three can be overridden with environment variables or a `.env` file,
+because `Settings` is a pydantic `BaseSettings` class.
+
+::: {.callout-note}
+The README says the app uses *Gemini 1.5 Pro*, but the configured model is
+`{python} settings.GEMINI_MODEL`. The table above is read from the code, so it
+is the one to trust.
+:::
+
+## Replaying saved replies
+
+The service sends every request through `self.model.generate_content(...)`
+and reads the reply's `.text`. The helper below stands in for that one call:
+it records what the service sent, then returns the next saved reply.
+
+```{python}
+from types import SimpleNamespace
+
+class ReplayModel:
+    """Records each request and answers with the next saved reply."""
+
+    def __init__(self, *replies):
+        self.replies = list(replies)
+        self.requests = []
+
+    def generate_content(self, prompt, generation_config=None):
+        self.requests.append({"prompt": prompt, "config": generation_config})
+        return SimpleNamespace(text=self.replies.pop(0))
+
+def replay(*replies):
+    """Point the service at a ReplayModel holding these replies."""
+    model = ReplayModel(*replies)
+    gemini_service.model = model
+    return model
+```
+
+## From résumé to prompt
+
+`analyze_resume` builds one long prompt: an instruction, the résumé text, the
+job description, and the exact JSON shape the reply must follow. Here is what
+it sends for a short résumé:
+
+```{python}
+resume = "Jane Doe\nPython developer\nSkills: Python, FastAPI, SQL"
+
+model = replay('{"overall_score": 7.5, "strengths": ["Python"], '
+               '"skills_to_emphasize": [], "keywords_to_add": ["Docker"], '
+               '"experience_to_highlight": [], "gaps_to_address": [], '
+               '"improvement_areas": []}')
+
+analysis = await gemini_service.analyze_resume(resume, job_role="Backend Engineer")
+sent = model.requests[0]["prompt"]
+print(sent[:420] + "\n...")
+```
+
+```{python}
+assert "Backend Engineer position" in sent
+assert resume in sent
+assert "No specific job description provided" in sent
+"✓ the prompt carries the role, the résumé, and a fallback job description"
+```
+
+When no job description is given, the prompt says *"No specific job
+description provided"* rather than leaving the section empty. The reply comes
+back as a plain Python dictionary:
+
+```{python}
+analysis
+```
+
+## Temperature for each task
+
+Temperature controls how varied the model's output is: low values give
+consistent, predictable text, high values give more creative text. The
+service picks a temperature per task. The table below is measured, not
+copied: each method is called and the temperature it actually sent is read
+back from the recorded request.
+
+```{python}
+#| echo: false
+methods = [
+    ("analyze_resume", "Résumé analysis",
+     lambda: gemini_service.analyze_resume(resume, "Backend Engineer"), "{}"),
+    ("analyze_ats_compatibility", "ATS check",
+     lambda: gemini_service.analyze_ats_compatibility(resume), "{}"),
+    ("research_company", "Company research",
+     lambda: gemini_service.research_company("Acme"), "{}"),
+    ("generate_optimized_resume", "Rewritten résumé",
+     lambda: gemini_service.generate_optimized_resume(resume, "Backend Engineer", "Acme", {}, {}), "text"),
+    ("generate_cover_letter", "Cover letter",
+     lambda: gemini_service.generate_cover_letter("Backend Engineer", "Acme", {}, {}), "text"),
+]
+
+rows = ["| Method | Task | Temperature sent |", "|---|---|---|"]
+measured = {}
+for name, task, call, reply in methods:
+    model = replay(reply)
+    await call()
+    temp = model.requests[0]["config"].temperature
+    measured[name] = temp
+    rows.append(f"| `{name}` | {task} | {temp} |")
+
+Markdown("\n".join(rows))
+```
+
+Every method that expects JSON goes through `generate_json_response`, which
+fixes the temperature at 0.3 so replies stay close to the requested structure.
+The two writing tasks run warmer: 0.5 for the résumé, 0.7 for the cover
+letter.
+
+```{python}
+#| echo: false
+assert measured["analyze_resume"] == 0.3
+assert measured["generate_optimized_resume"] == 0.5
+assert measured["generate_cover_letter"] == 0.7
+```
+
+### A temperature of 0 is silently ignored
+
+`generate_content` chooses its temperature with this line:
+
+```python
+temperature=temperature or settings.GEMINI_TEMPERATURE,
+```
+
+In Python, `0.0` counts as false, so `0.0 or 0.7` evaluates to `0.7`. Asking
+for the most deterministic output possible quietly gives the default instead:
+
+```{python}
+model = replay("ok")
+await gemini_service.generate_content("Say ok.", temperature=0.0)
+model.requests[0]["config"].temperature
+```
+
+```{python}
+assert model.requests[0]["config"].temperature == settings.GEMINI_TEMPERATURE
+"✓ confirmed: temperature=0.0 is replaced by the default"
+```
+
+No current caller passes `0.0`, so the app's output is not affected today. It
+would bite anyone who adds one. The fix is to test for `None` explicitly:
+
+```python
+temperature=settings.GEMINI_TEMPERATURE if temperature is None else temperature,
+```
+
+## Turning replies into data
+
+Language models do not always return clean JSON, even when told to.
+`generate_json_response` cleans the reply in three stages before giving up:
+
+1. Strip Markdown code fences (```` ```json ```` at the start, ```` ``` ```` at the end).
+2. Try to parse what is left as JSON.
+3. If that fails, find the outermost `{ ... }` in the text and parse only that.
+
+Each case below sends a differently shaped reply through the real method:
+
+```{python}
+async def parse(reply):
+    replay(reply)
+    return await gemini_service.generate_json_response("any prompt")
+
+clean   = await parse('{"ats_score": 72}')
+fenced  = await parse('```json\n{"ats_score": 72}\n```')
+chatty  = await parse('Here is the analysis you asked for:\n{"ats_score": 72}\nGood luck!')
+trailer = await parse('```json\n{"ats_score": 72}\n``` Hope this helps!')
+
+clean, fenced, chatty, trailer
+```
+
+```{python}
+assert clean == fenced == chatty == trailer == {"ats_score": 72}
+"✓ clean, fenced, chatty and trailing-text replies all parse to the same data"
+```
+
+The last case is worth noticing. The closing fence is only stripped when it is
+the final thing in the reply, so `Hope this helps!` defeats stage 1 and the
+first parse fails. Stage 3 rescues it.
+
+When there is no JSON object anywhere in the reply, the method raises:
+
+```{python}
+try:
+    await parse("Sorry, I can't help with that.")
+except Exception as err:
+    parse_error = str(err)
+
+parse_error
+```
+
+```{python}
+assert parse_error.startswith("Failed to parse JSON response")
+"✓ a reply with no JSON raises a labelled error"
+```
+
+## When the request itself fails
+
+Any error from the Gemini client (a bad key, no network, an exhausted quota)
+is caught and re-raised with a `Gemini API error:` prefix:
+
+```{python}
+class FailingModel:
+    def generate_content(self, prompt, generation_config=None):
+        raise RuntimeError("API key not valid")
+
+gemini_service.model = FailingModel()
+try:
+    await gemini_service.generate_content("hello")
+except Exception as err:
+    api_error = str(err)
+
+api_error
+```
+
+```{python}
+assert api_error == "Gemini API error: API key not valid"
+"✓ client errors are wrapped with a clear prefix"
+```
+
+As with the PDF service, the error is re-raised as a plain `Exception`, so the
+original error type is lost. The API routers catch it and return HTTP 500,
+adding their own prefix, so a client sees a detail such as
+*"Error analyzing resume: Gemini API error: API key not valid"*.
+
+## Summary
+
+| Method | Returns | Temperature | Parsed as |
+|---|---|---|---|
+| `analyze_resume` | `dict` | 0.3 | JSON |
+| `analyze_ats_compatibility` | `dict` | 0.3 | JSON |
+| `research_company` | `dict` | 0.3 | JSON |
+| `generate_recommendations` | `dict` | 0.3 | JSON |
+| `generate_optimized_resume` | `str` | 0.5 | plain text |
+| `generate_cover_letter` | `str` | 0.7 | plain text |
+
+Things to know when changing this service:
+
+- Replies are **not validated** here. Whatever keys Gemini returns are passed
+  on as-is; checking the shape is left to the API layer's response models.
+- `temperature=0.0` is replaced by the default (see above).
+- All failures surface as plain `Exception`s, distinguished only by message.
